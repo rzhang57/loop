@@ -1,55 +1,181 @@
+import re
+
 from openai import APIStatusError
 from textual.app import App, ComposeResult
+from textual.events import Key
 from textual.containers import VerticalScroll
-from textual.widgets import Input, Static
+from textual.widgets import Static, TextArea
 
 from core.chat import chat
 
 
+class Composer(TextArea):
+    async def _on_key(self, event: Key) -> None:
+        if event.key == "ctrl+c":
+            event.stop()
+            event.prevent_default()
+            self.app.exit()
+            return
+
+        if event.key == "enter":
+            event.stop()
+            event.prevent_default()
+            await self.app._submit()
+            return
+
+        await super()._on_key(event)
+
+
 class ChatApp(App):
+    SPINNER_FRAMES = ["·  ", "·· ", "···", " ··", "  ·"]
+
+    CSS = """
+    VerticalScroll,
+    Static {
+        background: transparent;
+    }
+
+    TextArea {
+        height: 3;
+        background: transparent;
+        color: white;
+        border: solid gray;
+    }
+
+    TextArea:focus {
+        border: solid white;
+    }
+    """
+
     def __init__(self) -> None:
         super().__init__()
         self.messages: list[dict[str, str]] = []
-        self.transcript = ""
+        self.pending_assistant = ""
+        self.waiting_for_first_chunk = False
+        self.spinner_index = 0
+        self.spinner_timer = None
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="messages"):
-            yield Static(self.transcript, id="transcript")
-        yield Input(placeholder="> ", id="composer")
+            yield Static("", id="transcript")
+        yield Composer(placeholder="> ", id="composer")
 
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
-        prompt = event.value.strip()
+    def on_text_area_changed(self, _: TextArea.Changed) -> None:
+        self._resize_composer()
+
+    def on_mount(self) -> None:
+        self.spinner_timer = self.set_interval(0.3, self._advance_spinner, pause=True)
+
+    async def _submit(self) -> None:
+        composer = self.query_one("#composer", TextArea)
+        if composer.disabled:
+            return
+
+        prompt = composer.text.strip()
         if not prompt:
             return
 
-        composer = self.query_one("#composer", Input)
-        composer.value = ""
+        composer.clear()
         composer.disabled = True
+        self._resize_composer()
 
         self.messages.append({"role": "user", "content": prompt})
-        self.transcript += f"\nYou: {prompt}\nAssistant: "
+        self.pending_assistant = ""
+        self.waiting_for_first_chunk = True
+        self.spinner_index = 0
+        if self.spinner_timer is not None:
+            self.spinner_timer.resume()
         self._refresh_transcript()
 
         assistant_response = ""
 
         try:
             async for chunk in chat(self.messages):
+                if self.waiting_for_first_chunk:
+                    self.waiting_for_first_chunk = False
+                    if self.spinner_timer is not None:
+                        self.spinner_timer.pause()
                 assistant_response += chunk
-                self.transcript += chunk
+                self.pending_assistant = assistant_response
                 self._refresh_transcript()
             self.messages.append({"role": "assistant", "content": assistant_response})
+            self.pending_assistant = ""
         except APIStatusError as error:
-            self.transcript += f"\n[error {error.status_code}] {error.message}"
+            self.waiting_for_first_chunk = False
+            self.pending_assistant = f"[error {error.status_code}] {error.message}"
             self._refresh_transcript()
         except Exception as error:
-            self.transcript += f"\n[error] {error}"
+            self.waiting_for_first_chunk = False
+            self.pending_assistant = f"[error] {error}"
             self._refresh_transcript()
         finally:
-            self.transcript += "\n"
+            self.waiting_for_first_chunk = False
+            if self.spinner_timer is not None:
+                self.spinner_timer.pause()
             self._refresh_transcript()
             composer.disabled = False
             composer.focus()
+            self._resize_composer()
+
+    def _render_transcript(self) -> str:
+        blocks: list[str] = []
+
+        for message in self.messages:
+            role = message["role"]
+            content = self._plain_text(message["content"])
+            if role == "user":
+                blocks.append(self._format_user_block(content))
+            elif role == "assistant":
+                blocks.append(content)
+
+        if self.waiting_for_first_chunk:
+            blocks.append(f"{self.SPINNER_FRAMES[self.spinner_index]} Thinking")
+
+        if self.pending_assistant:
+            blocks.append(self._plain_text(self.pending_assistant))
+
+        return "\n\n".join(blocks)
+
+    def _plain_text(self, text: str) -> str:
+        text = re.sub(
+            r"```(?:[\w+-]+\n)?(.*?)```",
+            lambda match: self._format_code_block(match.group(1)),
+            text,
+            flags=re.DOTALL,
+        )
+        text = re.sub(r"`([^`]*)`", r"\1", text)
+        text = re.sub(r"\*\*(.*?)\*\*", r"\1", text, flags=re.DOTALL)
+        text = re.sub(r"__(.*?)__", r"\1", text, flags=re.DOTALL)
+        text = re.sub(r"\*(.*?)\*", r"\1", text, flags=re.DOTALL)
+        text = re.sub(r"_(.*?)_", r"\1", text, flags=re.DOTALL)
+        text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+        text = re.sub(r"(?m)^#{1,6}\s*", "", text)
+        text = re.sub(r"(?m)^-\s+", "* ", text)
+        text = re.sub(r"(?m)^\+\s+", "* ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+    def _format_code_block(self, content: str) -> str:
+        lines = content.strip("\n").splitlines()
+        if not lines:
+            return ""
+        return "\n".join(f"    {line}" for line in lines)
+
+    def _format_user_block(self, content: str) -> str:
+        lines = content.splitlines() or [content]
+        return "\n".join(f"> {line}" if line else ">" for line in lines)
+
+    def _resize_composer(self) -> None:
+        composer = self.query_one("#composer", TextArea)
+        line_count = max(1, composer.text.count("\n") + 1)
+        composer.styles.height = min(8, line_count + 2)
+
+    def _advance_spinner(self) -> None:
+        if not self.waiting_for_first_chunk:
+            return
+        self.spinner_index = (self.spinner_index + 1) % len(self.SPINNER_FRAMES)
+        self._refresh_transcript()
 
     def _refresh_transcript(self) -> None:
-        self.query_one("#transcript", Static).update(self.transcript)
+        self.query_one("#transcript", Static).update(self._render_transcript())
         self.query_one("#messages", VerticalScroll).scroll_end(animate=False)
