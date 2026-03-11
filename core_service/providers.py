@@ -1,6 +1,6 @@
 from openai import AsyncOpenAI
 
-from core.config import get_required_env
+from core_service.config import get_required_env
 
 DEFAULT_MODEL = "arcee-ai/trinity-large-preview:free"
 

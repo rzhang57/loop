@@ -1,6 +1,6 @@
 from typing import AsyncGenerator
 
-from core.providers import client, DEFAULT_MODEL
+from core_service.providers import client, DEFAULT_MODEL
 
 
 async def chat(messages: list) -> AsyncGenerator[str, None]:

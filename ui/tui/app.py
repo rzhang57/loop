@@ -5,7 +5,7 @@ from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Static, TextArea
 
-from core.chat import chat
+from core_service.chat import chat
 from ui.tui.composer import Composer
 from ui.tui.transcript import render_transcript
 
@@ -20,6 +20,7 @@ class ChatApp(App):
     }
 
     #messages {
+        align-vertical: bottom;
         scrollbar-background: transparent;
         scrollbar-background-hover: transparent;
         scrollbar-background-active: transparent;
