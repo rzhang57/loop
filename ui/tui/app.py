@@ -1,20 +1,38 @@
 import re
+import sys
+from pathlib import Path
 
 from openai import APIStatusError
 from textual.app import App, ComposeResult
-from textual.events import Key
 from textual.containers import VerticalScroll
+from textual.events import Key
 from textual.widgets import Static, TextArea
 
 from core.chat import chat
 
+DEBUG_LOG = Path("shift_enter_debug.log")
+
 
 class Composer(TextArea):
+    def _debug(self, message: str) -> None:
+        with DEBUG_LOG.open("a", encoding="utf-8") as handle:
+            handle.write(message + "\n")
+
     async def _on_key(self, event: Key) -> None:
+        if "enter" in event.key or "return" in event.key or "newline" in event.key:
+            self._debug(f"composer event: key={event.key!r} aliases={event.aliases!r}")
+
         if event.key == "ctrl+c":
             event.stop()
             event.prevent_default()
             self.app.exit()
+            return
+
+        if self._is_newline_key(event):
+            event.stop()
+            event.prevent_default()
+            self.insert("\n")
+            self.app._resize_composer()
             return
 
         if event.key == "enter":
@@ -25,6 +43,19 @@ class Composer(TextArea):
 
         await super()._on_key(event)
 
+    def _is_newline_key(self, event: Key) -> bool:
+        newline_keys = {"shift+enter", "shift+return", "ctrl+j", "newline"}
+        if event.key in newline_keys or any(alias in newline_keys for alias in event.aliases):
+            return True
+        # On Windows, shift+enter arrives as plain enter because the Win32 input
+        # path strips modifier state. Check shift directly while the key is still held.
+        if event.key == "enter" and sys.platform == "win32":
+            import ctypes
+            VK_SHIFT = 0x10
+            if ctypes.windll.user32.GetAsyncKeyState(VK_SHIFT) & 0x8000:
+                return True
+        return False
+
 
 class ChatApp(App):
     SPINNER_FRAMES = ["·  ", "·· ", "···", " ··", "  ·"]
@@ -33,6 +64,16 @@ class ChatApp(App):
     VerticalScroll,
     Static {
         background: transparent;
+    }
+
+    #messages {
+        scrollbar-background: transparent;
+        scrollbar-background-hover: transparent;
+        scrollbar-background-active: transparent;
+        scrollbar-color: white;
+        scrollbar-color-hover: white;
+        scrollbar-color-active: white;
+        scrollbar-corner-color: transparent;
     }
 
     TextArea {
@@ -48,7 +89,12 @@ class ChatApp(App):
     """
 
     def __init__(self) -> None:
-        super().__init__()
+        if sys.platform == "win32":
+            from ui.tui.windows_driver import LoopWindowsDriver
+
+            super().__init__(driver_class=LoopWindowsDriver)
+        else:
+            super().__init__()
         self.messages: list[dict[str, str]] = []
         self.pending_assistant = ""
         self.waiting_for_first_chunk = False
@@ -122,7 +168,7 @@ class ChatApp(App):
 
         for message in self.messages:
             role = message["role"]
-            content = self._plain_text(message["content"])
+            content = message["content"]
             if role == "user":
                 blocks.append(self._format_user_block(content))
             elif role == "assistant":
@@ -132,28 +178,9 @@ class ChatApp(App):
             blocks.append(f"{self.SPINNER_FRAMES[self.spinner_index]} Thinking")
 
         if self.pending_assistant:
-            blocks.append(self._plain_text(self.pending_assistant))
+            blocks.append(self.pending_assistant)
 
         return "\n\n".join(blocks)
-
-    def _plain_text(self, text: str) -> str:
-        text = re.sub(
-            r"```(?:[\w+-]+\n)?(.*?)```",
-            lambda match: self._format_code_block(match.group(1)),
-            text,
-            flags=re.DOTALL,
-        )
-        text = re.sub(r"`([^`]*)`", r"\1", text)
-        text = re.sub(r"\*\*(.*?)\*\*", r"\1", text, flags=re.DOTALL)
-        text = re.sub(r"__(.*?)__", r"\1", text, flags=re.DOTALL)
-        text = re.sub(r"\*(.*?)\*", r"\1", text, flags=re.DOTALL)
-        text = re.sub(r"_(.*?)_", r"\1", text, flags=re.DOTALL)
-        text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
-        text = re.sub(r"(?m)^#{1,6}\s*", "", text)
-        text = re.sub(r"(?m)^-\s+", "* ", text)
-        text = re.sub(r"(?m)^\+\s+", "* ", text)
-        text = re.sub(r"\n{3,}", "\n\n", text)
-        return text.strip()
 
     def _format_code_block(self, content: str) -> str:
         lines = content.strip("\n").splitlines()
@@ -168,7 +195,7 @@ class ChatApp(App):
     def _resize_composer(self) -> None:
         composer = self.query_one("#composer", TextArea)
         line_count = max(1, composer.text.count("\n") + 1)
-        composer.styles.height = min(8, line_count + 2)
+        composer.styles.height = min(6, line_count + 2)
 
     def _advance_spinner(self) -> None:
         if not self.waiting_for_first_chunk:
