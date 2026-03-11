@@ -1,0 +1,42 @@
+import sys
+
+from textual.events import Key
+from textual.widgets import TextArea
+
+
+class Composer(TextArea):
+    async def _on_key(self, event: Key) -> None:
+        if event.key == "ctrl+c":
+            event.stop()
+            event.prevent_default()
+            self.app.exit()
+            return
+
+        if self._is_newline_key(event):
+            event.stop()
+            event.prevent_default()
+            self.insert("\n")
+            self.app._resize_composer()
+            return
+
+        if event.key == "enter":
+            event.stop()
+            event.prevent_default()
+            await self.app._submit()
+            return
+
+        await super()._on_key(event)
+
+    def _is_newline_key(self, event: Key) -> bool:
+        newline_keys = {"shift+enter", "shift+return", "ctrl+j", "newline"}
+        if event.key in newline_keys or any(alias in newline_keys for alias in event.aliases):
+            return True
+
+        if event.key == "enter" and sys.platform == "win32":
+            import ctypes
+
+            vk_shift = 0x10
+            if ctypes.windll.user32.GetAsyncKeyState(vk_shift) & 0x8000:
+                return True
+
+        return False

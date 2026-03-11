@@ -1,60 +1,13 @@
-import re
 import sys
-from pathlib import Path
 
 from openai import APIStatusError
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
-from textual.events import Key
 from textual.widgets import Static, TextArea
 
 from core.chat import chat
-
-DEBUG_LOG = Path("shift_enter_debug.log")
-
-
-class Composer(TextArea):
-    def _debug(self, message: str) -> None:
-        with DEBUG_LOG.open("a", encoding="utf-8") as handle:
-            handle.write(message + "\n")
-
-    async def _on_key(self, event: Key) -> None:
-        if "enter" in event.key or "return" in event.key or "newline" in event.key:
-            self._debug(f"composer event: key={event.key!r} aliases={event.aliases!r}")
-
-        if event.key == "ctrl+c":
-            event.stop()
-            event.prevent_default()
-            self.app.exit()
-            return
-
-        if self._is_newline_key(event):
-            event.stop()
-            event.prevent_default()
-            self.insert("\n")
-            self.app._resize_composer()
-            return
-
-        if event.key == "enter":
-            event.stop()
-            event.prevent_default()
-            await self.app._submit()
-            return
-
-        await super()._on_key(event)
-
-    def _is_newline_key(self, event: Key) -> bool:
-        newline_keys = {"shift+enter", "shift+return", "ctrl+j", "newline"}
-        if event.key in newline_keys or any(alias in newline_keys for alias in event.aliases):
-            return True
-        # On Windows, shift+enter arrives as plain enter because the Win32 input
-        # path strips modifier state. Check shift directly while the key is still held.
-        if event.key == "enter" and sys.platform == "win32":
-            import ctypes
-            VK_SHIFT = 0x10
-            if ctypes.windll.user32.GetAsyncKeyState(VK_SHIFT) & 0x8000:
-                return True
-        return False
+from ui.tui.composer import Composer
+from ui.tui.transcript import render_transcript
 
 
 class ChatApp(App):
@@ -164,33 +117,12 @@ class ChatApp(App):
             self._resize_composer()
 
     def _render_transcript(self) -> str:
-        blocks: list[str] = []
-
-        for message in self.messages:
-            role = message["role"]
-            content = message["content"]
-            if role == "user":
-                blocks.append(self._format_user_block(content))
-            elif role == "assistant":
-                blocks.append(content)
-
-        if self.waiting_for_first_chunk:
-            blocks.append(f"{self.SPINNER_FRAMES[self.spinner_index]} Thinking")
-
-        if self.pending_assistant:
-            blocks.append(self.pending_assistant)
-
-        return "\n\n".join(blocks)
-
-    def _format_code_block(self, content: str) -> str:
-        lines = content.strip("\n").splitlines()
-        if not lines:
-            return ""
-        return "\n".join(f"    {line}" for line in lines)
-
-    def _format_user_block(self, content: str) -> str:
-        lines = content.splitlines() or [content]
-        return "\n".join(f"> {line}" if line else ">" for line in lines)
+        return render_transcript(
+            messages=self.messages,
+            pending_assistant=self.pending_assistant,
+            waiting_for_first_chunk=self.waiting_for_first_chunk,
+            spinner_frame=self.SPINNER_FRAMES[self.spinner_index],
+        )
 
     def _resize_composer(self) -> None:
         composer = self.query_one("#composer", TextArea)
