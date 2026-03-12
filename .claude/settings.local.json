@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la \"C:/Users/Ryan/Documents/GitHub/loop/ui/tui/\" | grep -E \"\\\\.\\(tcss|css\\)$\")",
+      "Bash(grep -r \"class.*Resize\" \"C:\\\\Users\\\\Ryan\\\\Documents\\\\GitHub\\\\loop\\\\venv\\\\Lib\\\\site-packages\\\\textual\" --include=\"*.py\" 2>/dev/null | head -20)"
+    ]
+  }
+}

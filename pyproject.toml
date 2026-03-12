@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "loop"
+version = "0.1.0"
+dependencies = [
+    "openai",
+    "textual",
+]
+
+[project.scripts]
+loop = "ui.tui:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["core_service", "server", "tool_registry", "ui"]

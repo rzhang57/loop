@@ -14,11 +14,6 @@ class ChatApp(App):
     SPINNER_FRAMES = ["·  ", "·· ", "···", " ··", "  ·"]
 
     CSS = """
-    VerticalScroll,
-    Static {
-        background: transparent;
-    }
-
     #messages {
         align-vertical: bottom;
         scrollbar-background: transparent;
@@ -32,7 +27,6 @@ class ChatApp(App):
 
     TextArea {
         height: 3;
-        background: transparent;
         color: white;
         border: solid gray;
     }
@@ -135,6 +129,10 @@ class ChatApp(App):
             return
         self.spinner_index = (self.spinner_index + 1) % len(self.SPINNER_FRAMES)
         self._refresh_transcript()
+
+    def on_resize(self) -> None:
+        self._refresh_transcript()
+        self.query_one("#messages", VerticalScroll).scroll_end(animate=False)
 
     def _refresh_transcript(self) -> None:
         self.query_one("#transcript", Static).update(self._render_transcript())

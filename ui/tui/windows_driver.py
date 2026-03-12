@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from codecs import getincrementaldecoder
 from threading import Event, Thread
@@ -12,6 +13,8 @@ from textual.drivers._input_reader import InputReader
 from textual.drivers._writer_thread import WriterThread
 from textual.drivers import win32
 from textual.drivers.windows_driver import WindowsDriver
+from textual.events import Resize
+from textual.geometry import Size
 
 
 class LoopWindowsDriver(WindowsDriver):
@@ -26,6 +29,8 @@ class LoopWindowsDriver(WindowsDriver):
         super().__init__(app, debug=debug, mouse=mouse, size=size)
         self._input_reader: InputReader | None = None
         self._input_thread: Thread | None = None
+        self._resize_stop = Event()
+        self._resize_thread: Thread | None = None
 
     def start_application_mode(self) -> None:
         self._restore_console = win32.enable_application_mode()
@@ -45,6 +50,27 @@ class LoopWindowsDriver(WindowsDriver):
         self._input_thread = Thread(target=self._run_input_thread, name="loop-input")
         self._input_thread.start()
 
+        self._resize_stop.clear()
+        self._resize_thread = Thread(target=self._run_resize_thread, name="loop-resize", daemon=True)
+        self._resize_thread.start()
+
+    def _run_resize_thread(self) -> None:
+        try:
+            ts = os.get_terminal_size()
+            current = (ts.columns, ts.lines)
+        except OSError:
+            return
+        while not self._resize_stop.wait(0.1):
+            try:
+                ts = os.get_terminal_size()
+                new = (ts.columns, ts.lines)
+            except OSError:
+                break
+            if new != current:
+                current = new
+                size = Size(*new)
+                self._app.post_message(Resize(size, size))
+
     def _run_input_thread(self) -> None:
         parser = XTermParser(debug=constants.DEBUG)
         decode = getincrementaldecoder("utf-8")().decode
@@ -62,7 +88,7 @@ class LoopWindowsDriver(WindowsDriver):
         except BaseException:
             import rich.traceback
 
-            self._app.call_later(
+            self._app.call_from_thread(
                 self._app.panic,
                 rich.traceback.Traceback(),
             )
@@ -77,6 +103,7 @@ class LoopWindowsDriver(WindowsDriver):
     def disable_input(self) -> None:
         try:
             self._disable_mouse_support()
+            self._resize_stop.set()
             if self._input_reader is not None:
                 self._input_reader.close()
                 self._input_reader = None

@@ -1,10 +1,18 @@
 import sys
 
+from rich.style import Style
 from textual.events import Key
 from textual.widgets import TextArea
+from textual.widgets.text_area import TextAreaTheme
+
+_THEME = TextAreaTheme(name="loop", base_style=Style(color="white", bgcolor="default"))
 
 
 class Composer(TextArea):
+    def on_mount(self) -> None:
+        self.register_theme(_THEME)
+        self.theme = "loop"
+
     async def _on_key(self, event: Key) -> None:
         if event.key == "ctrl+c":
             event.stop()
