@@ -1,5 +1,4 @@
-venv
-.idea
-loop.iml
+/bin/
 .env
-*pycache*
+.claude/worktrees/
+.DS_Store
